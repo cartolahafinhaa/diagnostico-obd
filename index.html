@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>Diagnóstico Jetta</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;--accent:#2563eb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--chip:#eef1f5}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0f14;--card:#141a22;--text:#e5e7eb;--muted:#9ca3af;--line:#232b36;--accent:#3b82f6;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--chip:#1e2633}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 -apple-system,system-ui,"Segoe UI",Roboto,sans-serif;padding-bottom:calc(24px + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(12px + env(safe-area-inset-top)) 16px 10px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}
+h1{font-size:19px;margin:0}
+header small{display:block;color:var(--muted);font-size:12px}
+.pill{font-size:12px;padding:5px 11px;border-radius:99px;background:var(--chip);color:var(--muted);white-space:nowrap}
+.pill.on{color:#fff;background:var(--ok)}
+main{max-width:640px;margin:0 auto;padding:12px 16px;display:grid;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card h2 span{text-transform:none;letter-spacing:0;font-weight:400}
+button{font:inherit;border:0;border-radius:12px;padding:12px 14px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
+button.ghost{background:var(--chip);color:var(--text)}
+button.danger{background:transparent;color:var(--bad);border:1px solid var(--bad)}
+button:disabled{opacity:.4;cursor:default}
+.row{display:flex;gap:8px}
+.row+.row{margin-top:8px}
+.row>button{flex:1}
+.banner{background:#fef3c7;color:#78350f;border-radius:12px;padding:12px;font-size:14px}
+#msg{margin:10px 0 0;font-size:13px;color:var(--muted);min-height:1em}
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.stat{background:var(--chip);border-radius:12px;padding:10px 12px}
+.stat b{display:block;font-size:19px}
+.stat span{font-size:12px;color:var(--muted)}
+.stat.full{grid-column:1/-1}
+.stat.full b{font-size:15px}
+.warn b{color:var(--warn)}.bad b{color:var(--bad)}.good b{color:var(--ok)}
+.dtc{border:1px solid var(--line);border-radius:12px;padding:12px}
+.dtc+.dtc{margin-top:8px}
+.dtc .top{display:flex;gap:8px;align-items:center}
+.code{font-weight:700;font-family:ui-monospace,Menlo,monospace;font-size:16px}
+.tag{font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600}
+.tag.stored{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+.tag.pending{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
+.tag.perm{background:var(--chip);color:var(--muted)}
+.desc{margin:6px 0 0}
+.tip{margin:6px 0 0;color:var(--muted);font-size:13px}
+.empty{color:var(--muted);font-size:14px;margin:0}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-bottom:4px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.cyl{display:grid;grid-template-columns:78px 1fr 58px;gap:10px;align-items:center;padding:8px 0;font-size:14px}
+.cyl+.cyl{border-top:1px solid var(--line)}
+.cyl.sus{font-weight:700}
+.bars{display:grid;gap:4px}
+.bar{height:8px;background:var(--chip);border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px}
+.a{background:var(--accent)}.c{background:#8b5cf6}
+.cyl.sus .a,.cyl.sus .c{background:var(--bad)}
+.num{text-align:right;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+.verdict{margin-top:10px;padding:10px 12px;border-radius:12px;background:var(--chip);font-size:14px}
+.verdict.alert{background:color-mix(in srgb,var(--bad) 14%,transparent)}
+.hist{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line);font-size:14px;cursor:pointer}
+.hist:first-child{border-top:0}
+.hist span:last-child{color:var(--muted);text-align:right}
+details summary{cursor:pointer;color:var(--muted);font-size:13px}
+pre{white-space:pre-wrap;font-size:11px;max-height:240px;overflow:auto;color:var(--muted);margin:8px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>Diagnóstico OBD2</h1><small>Jetta 2.0 TSI · ELM327</small></div>
+  <span class="pill" id="status">Desconectado</span>
+</header>
+<main>
+  <div class="banner" id="nobt" hidden>Este navegador não acessa Bluetooth. No iPhone, abra esta página pelo app <b>Bluefy</b>. Enquanto isso, use a demonstração.</div>
+
+  <section class="card">
+    <div class="row">
+      <button id="bConnect">Conectar</button>
+      <button class="ghost" id="bDemo">Demonstração</button>
+    </div>
+    <div class="row">
+      <button id="bScan" disabled>Escanear</button>
+      <button class="danger" id="bClear" disabled>Apagar códigos</button>
+    </div>
+    <p id="msg">Ligue a ignição, conecte o ELM327 e toque em Conectar.</p>
+  </section>
+
+  <section class="card">
+    <h2>Resumo <span id="when"></span></h2>
+    <div class="stats">
+      <div class="stat" id="sMil"><b>—</b><span>Luz de injeção</span></div>
+      <div class="stat" id="sCount"><b>—</b><span>Códigos confirmados</span></div>
+      <div class="stat full" id="sFuel"><b>—</b><span>Sistema de combustível</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Falhas</h2>
+    <div id="dtcs"><p class="empty">Nenhuma leitura ainda.</p></div>
+  </section>
+
+  <section class="card">
+    <h2>Falhas de combustão por cilindro</h2>
+    <div class="legend"><span><i class="a"></i>Média (10 ciclos)</span><span><i class="c"></i>Ciclo atual</span></div>
+    <div id="cyls"><p class="empty">Nenhuma leitura ainda.</p></div>
+    <div class="verdict" id="verdict" hidden></div>
+  </section>
+
+  <section class="card">
+    <h2>Ao vivo <button class="ghost" id="bLive" disabled style="padding:6px 12px;font-size:13px">Iniciar</button></h2>
+    <div class="stats" id="live"></div>
+  </section>
+
+  <section class="card">
+    <h2>Histórico <span>toque para abrir</span></h2>
+    <div id="hist"></div>
+  </section>
+
+  <details class="card"><summary>Log do adaptador</summary><pre id="log"></pre></details>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+
+// ---------- Tabelas ----------
+const FUEL = {1:'Malha aberta: motor frio',2:'Malha fechada: normal',4:'Malha aberta: carga ou desaceleração',8:'Malha aberta: falha no sistema',16:'Malha fechada com falha no feedback da sonda'};
+
+const DTC = {
+  P0030:['Aquecedor da sonda pré-catalisador (B1S1): falha no circuito','Verifique conector, chicote e fusível do aquecedor.'],
+  P0031:['Aquecedor da sonda pré-catalisador (B1S1): sinal baixo','Chicote em curto ou aquecedor aberto.'],
+  P0032:['Aquecedor da sonda pré-catalisador (B1S1): sinal alto','Chicote em curto com positivo.'],
+  P0036:['Aquecedor da sonda pós-catalisador (B1S2): falha no circuito','Não causa falha de motor. Verifique conector, chicote perto do escapamento e fusível. Resistência do aquecedor: cerca de 3 a 10 Ω.'],
+  P0037:['Aquecedor da sonda pós-catalisador (B1S2): sinal baixo','Chicote ou aquecedor aberto.'],
+  P0038:['Aquecedor da sonda pós-catalisador (B1S2): sinal alto','Chicote em curto com positivo.'],
+  P0141:['Aquecedor da sonda pós-catalisador (B1S2): mau funcionamento','Mesma linha da P0036: conector, chicote ou sonda.'],
+  P0130:['Sonda pré-catalisador (B1S1): falha no circuito','Conector, chicote ou sonda.'],
+  P0133:['Sonda pré-catalisador (B1S1): resposta lenta','Sonda envelhecida ou vazamento no escapamento.'],
+  P0136:['Sonda pós-catalisador (B1S2): falha no circuito','Conector, chicote ou sonda.'],
+  P0137:['Sonda pós-catalisador (B1S2): tensão baixa','Vazamento no escapamento ou sonda.'],
+  P0138:['Sonda pós-catalisador (B1S2): tensão alta','Mistura rica ou sonda.'],
+  P0139:['Sonda pós-catalisador (B1S2): resposta lenta','Sonda envelhecida.'],
+  P2195:['Sonda pré-catalisador: sinal travado em pobre','Entrada falsa de ar (PCV) ou sonda.'],
+  P2196:['Sonda pré-catalisador: sinal travado em rico','Bico pingando ou sonda.'],
+  P0171:['Mistura pobre (banco 1)','No EA888, suspeite primeiro da válvula PCV/separador de óleo e de mangueiras de vácuo.'],
+  P0172:['Mistura rica (banco 1)','Bico pingando, pressão de combustível alta ou sensor MAF/MAP.'],
+  P2187:['Mistura pobre em marcha lenta','Entrada falsa de ar, principalmente a PCV.'],
+  P2188:['Mistura rica em marcha lenta','Bico injetor ou purga do canister.'],
+  P2279:['Entrada falsa de ar na admissão','Válvula PCV, mangueiras e juntas do coletor.'],
+  P0087:['Pressão do rail de combustível baixa','No EA888: tucho da bomba de alta pressão gasto ou bomba de baixa fraca.'],
+  P0299:['Turbo com pressão abaixo do esperado','Wastegate, mangueiras do intercooler ou válvula de alívio.'],
+  P0101:['Sensor MAF: leitura fora da faixa','Limpe ou verifique o MAF e procure entrada de ar.'],
+  P0106:['Sensor MAP: leitura fora da faixa','Sensor ou mangueira de vácuo.'],
+  P0068:['MAP/MAF não conferem com a borboleta','Entrada falsa de ar ou sensor.'],
+  P0011:['Comando de admissão adiantado demais','Óleo, válvula N205 ou corrente de comando esticada (comum no EA888).'],
+  P0016:['Virabrequim e comando fora de sincronia','Corrente de comando esticada ou tensor. Não rode muito com isso.'],
+  P0335:['Sensor de rotação (virabrequim)','Sensor ou chicote.'],
+  P0340:['Sensor de fase (comando)','Sensor ou chicote.'],
+  P0420:['Eficiência do catalisador abaixo do limite','Confirme antes as sondas e se não há falha de combustão.'],
+  P0441:['Sistema EVAP: fluxo de purga incorreto','Válvula de purga do canister.'],
+  P0455:['Sistema EVAP: vazamento grande','Tampa do tanque ou mangueiras.'],
+  P0506:['Marcha lenta abaixo do esperado','Corpo de borboleta sujo ou entrada de ar.'],
+  P0507:['Marcha lenta acima do esperado','Entrada falsa de ar.'],
+  P2015:['Flaps do coletor de admissão: posição','Atuador ou flaps do coletor.'],
+};
+
+function info(c){
+  if (DTC[c]) return {d:DTC[c][0], t:DTC[c][1]};
+  let m = c.match(/^P030([0-8])$/);
+  if (m) return m[1]==='0'
+    ? {d:'Falha de combustão aleatória ou em vários cilindros', t:'Causa comum a todos: pressão de combustível, entrada falsa de ar ou velas.'}
+    : {d:`Falha de combustão no cilindro ${m[1]}`, t:`Troque a bobina do cilindro ${m[1]} com a de outro cilindro e veja se a falha muda de lugar.`};
+  m = c.match(/^P035([1-4])$/);
+  if (m) return {d:`Bobina de ignição do cilindro ${m[1]}: falha no circuito`, t:'Conector ou bobina.'};
+  const k = c[0], n = c[1];
+  if (k==='P') return {d: n==='1'||n==='3' ? 'Código específico do fabricante (motor/câmbio)' : 'Código genérico do motor/câmbio', t:'Pesquise o código com o modelo do carro.'};
+  return {d:{B:'Carroceria',C:'Chassi',U:'Rede de comunicação entre módulos'}[k]||'Código desconhecido', t:''};
+}
+
+// ---------- Bluetooth / ELM327 ----------
+const SERVICES = [0xfff0, 0xffe0, 0x18f0, 'e7810a71-73ae-499d-8c15-faa9aef0c3f2'];
+const enc = new TextEncoder(), dec = new TextDecoder();
+let dev, rx, tx, buf = '', waiter = null, queue = Promise.resolve(), isCan = true, connected = false, liveOn = false;
+
+function log(s){ const p=$('#log'); p.textContent += s+'\n'; p.scrollTop = p.scrollHeight; }
+function msg(s){ $('#msg').textContent = s; }
+function setStatus(t, on){ const p=$('#status'); p.textContent=t; p.classList.toggle('on', !!on); }
+function enable(on){ for (const id of ['#bScan','#bClear','#bLive']) $(id).disabled = !on; $('#bConnect').textContent = on ? 'Desconectar' : 'Conectar'; }
+
+function onData(e){
+  buf += dec.decode(e.target.value);
+  const i = buf.indexOf('>');
+  if (i >= 0 && waiter){ const r = buf.slice(0,i); buf=''; const w=waiter; waiter=null; w(r); }
+}
+
+function send(cmd, timeout=5000, quiet=false){
+  const run = () => new Promise(async res => {
+    buf = '';
+    const t = setTimeout(() => { waiter=null; if(!quiet) log('> '+cmd+'  [sem resposta]'); res(''); }, timeout);
+    waiter = r => { clearTimeout(t); if(!quiet) log('> '+cmd+'\n'+r.trim()); res(r); };
+    const data = enc.encode(cmd+'\r');
+    try {
+      if (tx.properties.writeWithoutResponse && tx.writeValueWithoutResponse) await tx.writeValueWithoutResponse(data);
+      else await tx.writeValue(data);
+    } catch(e){ clearTimeout(t); waiter=null; log('erro de escrita: '+e.message); res(''); }
+  });
+  return queue = queue.then(run, run);
+}
+
+// Converte a resposta do ELM327 em bytes (remove "SEARCHING", índices de quadros CAN etc.)
+function bytes(r){
+  let hex = '';
+  for (let l of r.split(/[\r\n]+/)){
+    l = l.replace(/\s/g,'').toUpperCase();
+    if (!l || /SEARCHING|STOPPED|BUSINIT|^OK$/.test(l)) continue;
+    if (/NODATA|ERROR|UNABLE|\?/.test(l)) return null;
+    if (/^[0-9A-F]:/.test(l)) l = l.slice(2);
+    else if (/^[0-9A-F]{3}$/.test(l)) continue;
+    if (/^[0-9A-F]+$/.test(l)) hex += l;
+  }
+  return (hex.match(/../g)||[]).map(h => parseInt(h,16));
+}
+
+async function connect(){
+  if (connected){ dev.gatt.disconnect(); return; }
+  try {
+    dev = await navigator.bluetooth.requestDevice({acceptAllDevices:true, optionalServices:SERVICES});
+    setStatus('Conectando…'); msg('Conectando ao adaptador…');
+    dev.addEventListener('gattserverdisconnected', onDisconnect);
+    const gatt = await dev.gatt.connect();
+    rx = tx = null;
+    for (const s of SERVICES){
+      let svc; try { svc = await gatt.getPrimaryService(s); } catch { continue; }
+      for (const c of await svc.getCharacteristics()){
+        if (!rx && (c.properties.notify || c.properties.indicate)) rx = c;
+        if (!tx && (c.properties.write || c.properties.writeWithoutResponse)) tx = c;
+      }
+      if (rx && tx) break;
+      rx = tx = null;
+    }
+    if (!rx || !tx) throw new Error('Adaptador não reconhecido. Veja o log e me mande.');
+    await rx.startNotifications();
+    rx.addEventListener('characteristicvaluechanged', onData);
+    msg('Falando com a central do motor…');
+    for (const c of ['ATZ','ATE0','ATL0','ATS0','ATH0','ATAT1','ATSP0']) await send(c, 3000);
+    const r = await send('0100', 15000);
+    if (!r.replace(/\s/g,'').includes('4100')) throw new Error('A central não respondeu. Ligue a ignição ou o motor e tente de novo.');
+    isCan = /[6-9]$/.test((await send('ATDPN')).replace(/[^0-9A-F]/gi,''));
+    if (isCan) await send('ATSH7E0'); // fala só com a central do motor
+    connected = true; setStatus('Conectado', true); enable(true);
+    msg('Conectado. Toque em Escanear.');
+  } catch(e){
+    if (dev && dev.gatt.connected) dev.gatt.disconnect();
+    setStatus('Desconectado'); msg(e.message); log('ERRO: '+e.message);
+  }
+}
+
+function onDisconnect(){
+  connected = false; liveOn = false; $('#bLive').textContent = 'Iniciar';
+  setStatus('Desconectado'); enable(false); msg('Adaptador desconectado.');
+}
+
+async function pid(p){
+  const b = bytes(await send('01'+p, 3000, true));
+  if (!b) return null;
+  const i = b.indexOf(0x41);
+  return i < 0 || b[i+1] !== parseInt(p,16) ? null : b.slice(i+2);
+}
+
+function dtcCode(a,b){ return 'PCBU'[a>>6] + ((a>>4)&3) + (a&15).toString(16).toUpperCase() + b.toString(16).padStart(2,'0').toUpperCase(); }
+
+async function readDtc(mode){
+  const b = bytes(await send(mode, 6000));
+  if (!b) return [];
+  let i = b.indexOf(parseInt(mode,16) + 0x40);
+  if (i < 0) return [];
+  i += isCan ? 2 : 1; // no CAN vem um byte com a quantidade
+  const out = [];
+  for (; i+1 < b.length; i += 2) if (b[i] || b[i+1]) out.push(dtcCode(b[i], b[i+1]));
+  return [...new Set(out)];
+}
+
+// Modo 06: MIDs A2..A5 = cilindros 1..4. TID 0B = média de 10 ciclos, TID 0C = ciclo atual.
+function parseMisfire(b, mid){
+  let avg = null, cur = null;
+  if (!b) return {avg, cur};
+  let i = b.indexOf(0x46);
+  if (i < 0) return {avg, cur};
+  for (i++; i+8 < b.length; i += 9){
+    if (b[i] !== mid) continue;
+    const v = b[i+3]*256 + b[i+4];
+    if (b[i+1] === 0x0B) avg = v;
+    if (b[i+1] === 0x0C) cur = v;
+  }
+  return {avg, cur};
+}
+
+async function readMisfire(){
+  const out = [];
+  for (let c = 1; c <= 4; c++){
+    const mid = 0xA1 + c;
+    out.push({cyl:c, ...parseMisfire(bytes(await send('06'+mid.toString(16).toUpperCase(), 4000)), mid)});
+  }
+  return out;
+}
+
+async function scan(){
+  $('#bScan').disabled = true; msg('Lendo a central…');
+  try {
+    const r = {t: Date.now()};
+    const s = await pid('01');
+    if (s){ r.mil = !!(s[0] & 0x80); r.count = s[0] & 0x7f; }
+    const f = await pid('03'); if (f) r.fuel = f[0];
+    r.stored = await readDtc('03');
+    r.pending = await readDtc('07');
+    r.perm = await readDtc('0A');
+    r.mis = await readMisfire();
+    render(r); saveHist(r); msg('Leitura concluída.');
+  } catch(e){ msg('Erro na leitura: '+e.message); }
+  $('#bScan').disabled = !connected;
+}
+
+let armed = false;
+async function clearCodes(){
+  const b = $('#bClear');
+  if (!armed){ armed = true; b.textContent = 'Toque de novo'; setTimeout(() => { armed=false; b.textContent='Apagar códigos'; }, 4000); return; }
+  armed = false; b.textContent = 'Apagar códigos';
+  await send('04', 6000); msg('Códigos apagados.'); await scan();
+}
+
+// ---------- Ao vivo ----------
+const LIVE = [
+  {p:'0C', n:'Rotação', u:'rpm', f:d => Math.round((d[0]*256+d[1])/4)},
+  {p:'05', n:'Temperatura do motor', u:'°C', f:d => d[0]-40},
+  {p:'06', n:'Correção curta (STFT)', u:'%', f:d => ((d[0]-128)*100/128).toFixed(1), trim:true},
+  {p:'07', n:'Correção longa (LTFT)', u:'%', f:d => ((d[0]-128)*100/128).toFixed(1), trim:true},
+  {p:'15', n:'Sonda pós-catalisador', u:'V', f:d => (d[0]/200).toFixed(2)},
+  {p:'0B', n:'Pressão do coletor', u:'kPa', f:d => d[0]},
+];
+$('#live').innerHTML = LIVE.map(x => `<div class="stat" id="L${x.p}"><b>—</b><span>${x.n}</span></div>`).join('');
+
+async function toggleLive(){
+  liveOn = !liveOn; $('#bLive').textContent = liveOn ? 'Parar' : 'Iniciar';
+  while (liveOn && connected){
+    for (const x of LIVE){
+      if (!liveOn) break;
+      const d = await pid(x.p), el = $('#L'+x.p), v = d ? x.f(d) : null;
+      el.querySelector('b').textContent = v === null ? '—' : v+' '+x.u;
+      if (x.trim) el.className = 'stat' + (v !== null && Math.abs(v) > 10 ? ' warn' : '');
+    }
+  }
+}
+
+// ---------- Tela ----------
+function suspect(mis){
+  const s = mis.map(m => Math.max(m.avg||0, m.cur||0)), max = Math.max(...s);
+  if (max < 5) return null;
+  const i = s.indexOf(max), second = Math.max(...s.filter((_,j) => j !== i));
+  return max >= 3*Math.max(second,1) ? i+1 : 0; // 0 = vários cilindros
+}
+
+function fmt(t){ return new Date(t).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+
+function stat(id, text, cls){ const el=$(id); el.querySelector('b').textContent = text; el.className = 'stat'+(id==='#sFuel'?' full':'')+(cls?' '+cls:''); }
+
+function render(r){
+  $('#when').textContent = (r.demo ? 'Demonstração · ' : '') + fmt(r.t);
+  stat('#sMil', r.mil==null ? '—' : r.mil ? 'Acesa' : 'Apagada', r.mil ? 'bad' : r.mil===false ? 'good' : '');
+  stat('#sCount', r.count ?? '—', r.count ? 'warn' : '');
+  stat('#sFuel', FUEL[r.fuel] || '—', r.fuel>=8 ? 'warn' : r.fuel===2 ? 'good' : '');
+
+  const all = [
+    ...r.stored.map(c => [c,'stored','Confirmada']),
+    ...r.pending.filter(c => !r.stored.includes(c)).map(c => [c,'pending','Pendente']),
+    ...r.perm.filter(c => !r.stored.includes(c) && !r.pending.includes(c)).map(c => [c,'perm','Permanente']),
+  ];
+  $('#dtcs').innerHTML = all.length ? all.map(([c,k,l]) => { const i = info(c); return `
+    <div class="dtc"><div class="top"><span class="code">${c}</span><span class="tag ${k}">${l}</span></div>
+    <p class="desc">${i.d}</p>${i.t ? `<p class="tip">${i.t}</p>` : ''}</div>`; }).join('')
+    : '<p class="empty">Nenhum código de falha. Tudo certo.</p>';
+
+  const v = $('#verdict');
+  if (!r.mis || r.mis.every(m => m.avg===null && m.cur===null)){
+    $('#cyls').innerHTML = '<p class="empty">A central não informou os contadores do Modo 06.</p>'; v.hidden = true; return;
+  }
+  const sus = suspect(r.mis), top = Math.max(1, ...r.mis.map(m => Math.max(m.avg||0, m.cur||0)));
+  $('#cyls').innerHTML = r.mis.map(m => `
+    <div class="cyl${sus===m.cyl ? ' sus' : ''}"><span>Cilindro ${m.cyl}</span>
+      <div class="bars"><div class="bar"><i class="a" style="width:${(m.avg||0)/top*100}%"></i></div>
+      <div class="bar"><i class="c" style="width:${(m.cur||0)/top*100}%"></i></div></div>
+      <span class="num">${m.avg ?? '—'} / ${m.cur ?? '—'}</span></div>`).join('');
+  v.hidden = false;
+  v.className = 'verdict' + (sus !== null ? ' alert' : '');
+  v.textContent = sus === null ? 'Nenhum cilindro com falhas relevantes. Contagens abaixo de 5 são normais.'
+    : sus === 0 ? 'Falhas em mais de um cilindro. Suspeite de causa comum: pressão de combustível, entrada falsa de ar ou velas.'
+    : `O cilindro ${sus} concentra as falhas. Troque a bobina dele com a de outro cilindro, rode até a falha aparecer e escaneie de novo sem desligar o motor.`;
+}
+
+// ---------- Histórico (fica só neste aparelho) ----------
+const HK = 'obd-hist';
+function getHist(){ try { return JSON.parse(localStorage.getItem(HK)) || []; } catch { return []; } }
+function saveHist(r){ try { localStorage.setItem(HK, JSON.stringify([r, ...getHist()].slice(0,30))); } catch {} renderHist(); }
+function renderHist(){
+  const h = getHist();
+  $('#hist').innerHTML = h.length ? h.map((r,i) => {
+    const s = r.mis ? suspect(r.mis) : null, codes = [...new Set([...r.stored, ...r.pending])];
+    return `<div class="hist" data-i="${i}"><span>${fmt(r.t)}</span><span>${codes.join(', ') || 'Sem códigos'}${s ? ` · cil. ${s}` : ''}</span></div>`;
+  }).join('') : '<p class="empty">As leituras que você fizer ficam salvas aqui para comparar depois.</p>';
+}
+$('#hist').addEventListener('click', e => { const el = e.target.closest('.hist'); if (el){ render(getHist()[el.dataset.i]); scrollTo({top:0, behavior:'smooth'}); } });
+
+// ---------- Início ----------
+$('#bConnect').onclick = connect;
+$('#bScan').onclick = scan;
+$('#bClear').onclick = clearCodes;
+$('#bLive').onclick = toggleLive;
+$('#bDemo').onclick = () => render({t:Date.now(), demo:true, mil:false, count:1, fuel:16, stored:['P0036'], pending:[], perm:[],
+  mis:[{cyl:1,avg:14,cur:0},{cyl:2,avg:0,cur:0},{cyl:3,avg:0,cur:2},{cyl:4,avg:0,cur:1}]});
+if (!navigator.bluetooth){ $('#nobt').hidden = false; $('#bConnect').disabled = true; }
+renderHist();
+</script>
+</body>
+</html>
