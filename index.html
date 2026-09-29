@@ -46,6 +46,9 @@ button:disabled{opacity:.4;cursor:default}
 .desc{margin:6px 0 0}
 .tip{margin:6px 0 0;color:var(--muted);font-size:13px}
 .empty{color:var(--muted);font-size:14px;margin:0}
+.stats .empty{grid-column:1/-1}
+#q{width:100%;font:inherit;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--chip);color:var(--text);margin-bottom:10px}
+.stat[hidden]{display:none}
 .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-bottom:4px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 .cyl{display:grid;grid-template-columns:78px 1fr 58px;gap:10px;align-items:center;padding:8px 0;font-size:14px}
@@ -110,6 +113,12 @@ pre{white-space:pre-wrap;font-size:11px;max-height:240px;overflow:auto;color:var
   <section class="card">
     <h2>Ao vivo <button class="ghost" id="bLive" disabled style="padding:6px 12px;font-size:13px">Iniciar</button></h2>
     <div class="stats" id="live"></div>
+  </section>
+
+  <section class="card">
+    <h2>Todos os sensores <button class="ghost" id="bAll" disabled style="padding:6px 12px;font-size:13px">Iniciar</button></h2>
+    <input id="q" type="search" placeholder="Buscar sensor (ex.: sonda, pressão, temperatura)">
+    <div class="stats" id="all"><p class="empty">Conecte e toque em Iniciar. A página descobre sozinha quais sensores o carro informa.</p></div>
   </section>
 
   <section class="card">
@@ -185,12 +194,12 @@ const SERVICES = [B('fff0'), B('ffe0'), B('18f0'), B('ae30'),
   '49535343-fe7d-4ae5-8fa9-9fafd205e455', // Microchip transparent UART
   '6e400001-b5a3-f393-e0a9-e50e24dcca9e'];// Nordic UART
 const enc = new TextEncoder(), dec = new TextDecoder();
-let dev, rx, tx, buf = '', waiter = null, queue = Promise.resolve(), isCan = true, connected = false, liveOn = false;
+let dev, rx, tx, buf = '', waiter = null, queue = Promise.resolve(), isCan = true, connected = false;
 
 function log(s){ const p=$('#log'); p.textContent += s+'\n'; p.scrollTop = p.scrollHeight; }
 function msg(s){ $('#msg').textContent = s; }
 function setStatus(t, on){ const p=$('#status'); p.textContent=t; p.classList.toggle('on', !!on); }
-function enable(on){ for (const id of ['#bScan','#bClear','#bLive']) $(id).disabled = !on; $('#bConnect').textContent = on ? 'Desconectar' : 'Conectar'; }
+function enable(on){ for (const id of ['#bScan','#bClear','#bLive','#bAll']) $(id).disabled = !on; $('#bConnect').textContent = on ? 'Desconectar' : 'Conectar'; }
 
 function onData(e){
   buf += dec.decode(e.target.value);
@@ -265,7 +274,7 @@ async function connect(){
 }
 
 function onDisconnect(){
-  connected = false; liveOn = false; $('#bLive').textContent = 'Iniciar';
+  connected = false; ALL = null; stopLoops();
   setStatus('Desconectado'); enable(false); msg('Adaptador desconectado.');
 }
 
@@ -338,26 +347,94 @@ async function clearCodes(){
 }
 
 // ---------- Ao vivo ----------
-const LIVE = [
-  {p:'0C', n:'Rotação', u:'rpm', f:d => Math.round((d[0]*256+d[1])/4)},
-  {p:'05', n:'Temperatura do motor', u:'°C', f:d => d[0]-40},
-  {p:'06', n:'Correção curta (STFT)', u:'%', f:d => ((d[0]-128)*100/128).toFixed(1), trim:true},
-  {p:'07', n:'Correção longa (LTFT)', u:'%', f:d => ((d[0]-128)*100/128).toFixed(1), trim:true},
-  {p:'15', n:'Sonda pós-catalisador', u:'V', f:d => (d[0]/200).toFixed(2)},
-  {p:'0B', n:'Pressão do coletor', u:'kPa', f:d => d[0]},
-];
-$('#live').innerHTML = LIVE.map(x => `<div class="stat" id="L${x.p}"><b>—</b><span>${x.n}</span></div>`).join('');
+// Tabela dos sensores padrão OBD2 (Modo 01). d = bytes de dados (A, B, C, D).
+const hex = n => n.toString(16).toUpperCase().padStart(2,'0');
+const w = d => d[0]*256 + d[1];
+const pct = d => (d[0]*100/255).toFixed(1), trimF = d => ((d[0]-128)*100/128).toFixed(1), temp = d => d[0]-40, lam = d => (w(d)*2/65536).toFixed(3);
+const PIDS = {
+  0x04:['Carga do motor','%',pct], 0x05:['Temperatura do motor','°C',temp],
+  0x06:['Correção curta (STFT) B1','%',trimF], 0x07:['Correção longa (LTFT) B1','%',trimF],
+  0x08:['Correção curta (STFT) B2','%',trimF], 0x09:['Correção longa (LTFT) B2','%',trimF],
+  0x0A:['Pressão de combustível','kPa',d => d[0]*3], 0x0B:['Pressão do coletor','kPa',d => d[0]],
+  0x0C:['Rotação','rpm',d => Math.round(w(d)/4)], 0x0D:['Velocidade','km/h',d => d[0]],
+  0x0E:['Avanço de ignição','°',d => (d[0]/2-64).toFixed(1)], 0x0F:['Temperatura do ar de admissão','°C',temp],
+  0x10:['Fluxo de ar (MAF)','g/s',d => (w(d)/100).toFixed(2)], 0x11:['Borboleta','%',pct],
+  0x1F:['Tempo desde a partida','s',w], 0x21:['Distância com a luz acesa','km',w],
+  0x22:['Pressão do rail (relativa)','kPa',d => (w(d)*0.079).toFixed(1)], 0x23:['Pressão do rail','kPa',d => w(d)*10],
+  0x2C:['EGR comandada','%',pct], 0x2E:['Purga do canister comandada','%',pct], 0x2F:['Nível de combustível','%',pct],
+  0x30:['Aquecimentos desde apagar códigos','',d => d[0]], 0x31:['Distância desde apagar códigos','km',w],
+  0x33:['Pressão barométrica','kPa',d => d[0]],
+  0x3C:['Temperatura do catalisador B1S1','°C',d => (w(d)/10-40).toFixed(0)], 0x3D:['Temperatura do catalisador B2S1','°C',d => (w(d)/10-40).toFixed(0)],
+  0x3E:['Temperatura do catalisador B1S2','°C',d => (w(d)/10-40).toFixed(0)], 0x3F:['Temperatura do catalisador B2S2','°C',d => (w(d)/10-40).toFixed(0)],
+  0x42:['Tensão da central (bateria)','V',d => (w(d)/1000).toFixed(2)], 0x43:['Carga absoluta','%',d => (w(d)*100/255).toFixed(1)],
+  0x44:['Lambda comandado','λ',lam], 0x45:['Borboleta relativa','%',pct], 0x46:['Temperatura ambiente','°C',temp],
+  0x47:['Borboleta B','%',pct], 0x48:['Borboleta C','%',pct], 0x49:['Pedal do acelerador D','%',pct],
+  0x4A:['Pedal do acelerador E','%',pct], 0x4B:['Pedal do acelerador F','%',pct], 0x4C:['Borboleta comandada','%',pct],
+  0x4D:['Tempo com a luz acesa','min',w], 0x4E:['Tempo desde apagar códigos','min',w],
+  0x52:['Etanol no combustível','%',pct], 0x5A:['Pedal do acelerador relativo','%',pct],
+  0x5C:['Temperatura do óleo','°C',temp], 0x5E:['Consumo','L/h',d => (w(d)/20).toFixed(2)],
+};
+['B1S1','B1S2','B1S3','B1S4','B2S1','B2S2','B2S3','B2S4'].forEach((s,i) => {
+  PIDS[0x14+i] = [`Sonda ${s} (tensão)`,'V',d => (d[0]/200).toFixed(3)];
+  PIDS[0x24+i] = PIDS[0x34+i] = [`Sonda ${s} (lambda)`,'λ',lam];
+});
+const TRIMS = new Set([6,7,8,9]);
+const SKIP = new Set([0x01,0x02,0x03,0x12,0x13,0x1C,0x1D,0x1E,0x41,0x51]); // campos de bits, sem valor para mostrar
+const mk = p => { const e = PIDS[p]; return e ? {p:hex(p), n:e[0], u:e[1], f:e[2], trim:TRIMS.has(p)} : {p:hex(p), n:'PID '+hex(p)+' (bruto)', u:'', f:d => d.map(hex).join(' ')}; };
 
-async function toggleLive(){
-  liveOn = !liveOn; $('#bLive').textContent = liveOn ? 'Parar' : 'Iniciar';
-  while (liveOn && connected){
-    for (const x of LIVE){
-      if (!liveOn) break;
-      const d = await pid(x.p), el = $('#L'+x.p), v = d ? x.f(d) : null;
-      el.querySelector('b').textContent = v === null ? '—' : v+' '+x.u;
+const LIVE = [0x0C,0x05,0x06,0x07,0x15,0x0B].map(mk);
+const card = (x,pre,v='—') => `<div class="stat" id="${pre}${x.p}" data-n="${x.n.toLowerCase()}"><b>${v}</b><span>${x.n}</span></div>`;
+$('#live').innerHTML = LIVE.map(x => card(x,'L')).join('');
+
+// Um laço de leitura por vez: iniciar um para o outro.
+let loopTok = 0;
+function stopLoops(){ loopTok++; $('#bLive').textContent = 'Iniciar'; $('#bAll').textContent = 'Iniciar'; }
+async function runLoop(btn, list, pre){
+  const running = btn.textContent === 'Parar';
+  stopLoops(); if (running) return;
+  btn.textContent = 'Parar';
+  const tok = loopTok;
+  while (tok === loopTok && connected){
+    for (const x of list){
+      if (tok !== loopTok) return;
+      const el = $('#'+pre+x.p);
+      if (!el || el.hidden) continue; // só lê o que está visível na busca
+      const d = await pid(x.p), v = d ? x.f(d) : null;
+      el.querySelector('b').textContent = v === null ? '—' : v+(x.u ? ' '+x.u : '');
       if (x.trim) el.className = 'stat' + (v !== null && Math.abs(v) > 10 ? ' warn' : '');
     }
   }
+}
+
+// Descobre os PIDs suportados pelas máscaras 0100, 0120, 0140…
+async function discover(){
+  const sup = [];
+  for (let base = 0; base <= 0xC0; base += 0x20){
+    const d = await pid(hex(base));
+    if (!d || d.length < 4) break;
+    for (let i = 0; i < 32; i++) if (d[i>>3] & (0x80 >> (i&7))) sup.push(base+i+1);
+    if (!(d[3] & 1)) break;
+  }
+  return sup.filter(p => p % 0x20 && !SKIP.has(p));
+}
+
+let ALL = null;
+function renderAll(list, vals={}){
+  $('#all').innerHTML = list.length ? list.map(x => card(x,'A',vals[x.p] ?? '—')).join('') : '<p class="empty">A central não informou nenhum sensor.</p>';
+  filterAll();
+}
+function filterAll(){
+  const q = $('#q').value.trim().toLowerCase();
+  for (const el of document.querySelectorAll('#all .stat')) el.hidden = !!q && !el.dataset.n.includes(q);
+}
+async function toggleAll(){
+  const b = $('#bAll');
+  if (!ALL){
+    b.disabled = true; msg('Descobrindo os sensores do carro…');
+    ALL = (await discover()).map(mk);
+    renderAll(ALL); b.disabled = false; msg(`${ALL.length} sensores encontrados.`);
+  }
+  runLoop(b, ALL, 'A');
 }
 
 // ---------- Tela ----------
@@ -422,9 +499,16 @@ $('#hist').addEventListener('click', e => { const el = e.target.closest('.hist')
 $('#bConnect').onclick = connect;
 $('#bScan').onclick = scan;
 $('#bClear').onclick = clearCodes;
-$('#bLive').onclick = toggleLive;
+$('#bLive').onclick = () => runLoop($('#bLive'), LIVE, 'L');
+$('#bAll').onclick = toggleAll;
+$('#q').oninput = filterAll;
 $('#bDemo').onclick = () => render({t:Date.now(), demo:true, mil:false, count:1, fuel:16, stored:['P0036'], pending:[], perm:[],
-  mis:[{cyl:1,avg:14,cur:0},{cyl:2,avg:0,cur:0},{cyl:3,avg:0,cur:2},{cyl:4,avg:0,cur:1}]});
+  mis:[{cyl:1,avg:14,cur:0},{cyl:2,avg:0,cur:0},{cyl:3,avg:0,cur:2},{cyl:4,avg:0,cur:1}]}) || (!connected && renderDemoAll());
+function renderDemoAll(){
+  const v = {'04':'21.6 %','05':'89 °C','06':'-0.8 %','07':'3.1 %','0B':'31 kPa','0C':'780 rpm','0E':'8.5 °','0F':'34 °C','10':'2.71 g/s',
+    '11':'14.9 %','24':'1.002 λ','15':'0.690 V','33':'93 kPa','3C':'512 °C','42':'14.21 V','44':'1.000 λ','46':'27 °C'};
+  renderAll(Object.keys(v).map(p => mk(parseInt(p,16))), v);
+}
 if (!navigator.bluetooth){ $('#nobt').hidden = false; $('#bConnect').disabled = true; }
 renderHist();
 </script>
