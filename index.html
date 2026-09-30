@@ -45,6 +45,7 @@ button:disabled{opacity:.4;cursor:default}
 .mrow b{font-family:ui-monospace,Menlo,monospace}
 .mrow.sus{color:var(--bad);font-weight:700}
 #misLive ul{margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--bad)}
+.small{font-size:12px;color:var(--accent)}
 .nal{margin-left:auto;color:var(--warn);text-transform:none;letter-spacing:0;font-weight:600}
 .stat.full{grid-column:1/-1}
 .stat.full b{font-size:15px}
@@ -101,6 +102,7 @@ pre{white-space:pre-wrap;font-size:11px;max-height:240px;overflow:auto;color:var
       <button class="danger" id="bClear" disabled>Apagar códigos</button>
     </div>
     <p id="msg">Ligue a ignição, conecte o ELM327 e toque em Conectar.</p>
+    <a href="#" id="allDev" class="small">O adaptador não aparece na lista? Mostrar todos os dispositivos</a>
   </section>
 
   <section class="card">
@@ -250,10 +252,15 @@ function bytes(r){
   return (hex.match(/../g)||[]).map(h => parseInt(h,16));
 }
 
+// Só mostra adaptadores OBD na lista: filtra pelo canal Bluetooth ou pelo começo do nome.
+const NAMES = ['OBD','ELM','V-LINK','VLINK','IOS-VLINK','vLink','Vgate','VGATE','Veepeak','VEEPEAK','KONNWEI','Konnwei','OBDLink','Android-Vlink','iCar'];
+const FILTERS = [...SERVICES.map(s => ({services:[s]})), ...NAMES.map(n => ({namePrefix:n}))];
+let showAll = false;
+
 async function connect(){
   if (connected){ dev.gatt.disconnect(); return; }
   try {
-    dev = await navigator.bluetooth.requestDevice({acceptAllDevices:true, optionalServices:SERVICES});
+    dev = await navigator.bluetooth.requestDevice(showAll ? {acceptAllDevices:true, optionalServices:SERVICES} : {filters:FILTERS, optionalServices:SERVICES});
     setStatus('Conectando…'); msg('Conectando ao adaptador…');
     dev.addEventListener('gattserverdisconnected', onDisconnect);
     const gatt = await dev.gatt.connect();
@@ -576,7 +583,8 @@ function renderHist(){
 $('#hist').addEventListener('click', e => { const el = e.target.closest('.hist'); if (el){ render(getHist()[el.dataset.i]); scrollTo({top:0, behavior:'smooth'}); } });
 
 // ---------- Início ----------
-$('#bConnect').onclick = connect;
+$('#bConnect').onclick = () => { showAll = false; connect(); };
+$('#allDev').onclick = e => { e.preventDefault(); showAll = true; connect(); };
 $('#bScan').onclick = scan;
 $('#bClear').onclick = clearCodes;
 $('#bLive').onclick = () => runLoop($('#bLive'), LIVE, 'L');
