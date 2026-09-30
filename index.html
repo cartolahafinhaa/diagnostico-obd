@@ -32,6 +32,14 @@ button:disabled{opacity:.4;cursor:default}
 .stat{background:var(--chip);border-radius:12px;padding:10px 12px}
 .stat b{display:block;font-size:19px}
 .stat span{font-size:12px;color:var(--muted)}
+.stat{position:relative;border:1px solid transparent}
+.stat em{display:block;font-style:normal;font-size:12px;margin-top:4px;color:var(--warn)}
+.stat em:empty{display:none}
+.stat.warn{border-color:var(--warn)}
+.stat.bad{border-color:var(--bad)}.stat.bad em{color:var(--bad)}
+#live .stat.warn::after,#live .stat.bad::after,#all .stat.warn::after,#all .stat.bad::after{content:'!';position:absolute;top:8px;right:10px;width:18px;height:18px;border-radius:50%;background:var(--warn);color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center}
+#live .stat.bad::after,#all .stat.bad::after{background:var(--bad)}
+.nal{margin-left:auto;color:var(--warn);text-transform:none;letter-spacing:0;font-weight:600}
 .stat.full{grid-column:1/-1}
 .stat.full b{font-size:15px}
 .warn b{color:var(--warn)}.bad b{color:var(--bad)}.good b{color:var(--ok)}
@@ -111,12 +119,12 @@ pre{white-space:pre-wrap;font-size:11px;max-height:240px;overflow:auto;color:var
   </section>
 
   <section class="card">
-    <h2>Ao vivo <button class="ghost" id="bLive" disabled style="padding:6px 12px;font-size:13px">Iniciar</button></h2>
+    <h2>Ao vivo <span class="nal"></span><button class="ghost" id="bLive" disabled style="padding:6px 12px;font-size:13px">Iniciar</button></h2>
     <div class="stats" id="live"></div>
   </section>
 
   <section class="card">
-    <h2>Todos os sensores <button class="ghost" id="bAll" disabled style="padding:6px 12px;font-size:13px">Iniciar</button></h2>
+    <h2>Todos os sensores <span class="nal"></span><button class="ghost" id="bAll" disabled style="padding:6px 12px;font-size:13px">Iniciar</button></h2>
     <input id="q" type="search" placeholder="Buscar sensor (ex.: sonda, pressão, temperatura)">
     <div class="stats" id="all"><p class="empty">Conecte e toque em Iniciar. A página descobre sozinha quais sensores o carro informa.</p></div>
   </section>
@@ -378,12 +386,49 @@ const PIDS = {
   PIDS[0x14+i] = [`Sonda ${s} (tensão)`,'V',d => (d[0]/200).toFixed(3)];
   PIDS[0x24+i] = PIDS[0x34+i] = [`Sonda ${s} (lambda)`,'λ',lam];
 });
-const TRIMS = new Set([6,7,8,9]);
 const SKIP = new Set([0x01,0x02,0x03,0x12,0x13,0x1C,0x1D,0x1E,0x41,0x51]); // campos de bits, sem valor para mostrar
-const mk = p => { const e = PIDS[p]; return e ? {p:hex(p), n:e[0], u:e[1], f:e[2], trim:TRIMS.has(p)} : {p:hex(p), n:'PID '+hex(p)+' (bruto)', u:'', f:d => d.map(hex).join(' ')}; };
+const mk = p => { const e = PIDS[p]; return e ? {p:hex(p), n:e[0], u:e[1], f:e[2]} : {p:hex(p), n:'PID '+hex(p)+' (bruto)', u:'', f:d => d.map(hex).join(' ')}; };
 
-const LIVE = [0x0C,0x05,0x06,0x07,0x15,0x0B].map(mk);
-const card = (x,pre,v='—') => `<div class="stat" id="${pre}${x.p}" data-n="${x.n.toLowerCase()}"><b>${v}</b><span>${x.n}</span></div>`;
+// ---------- Faixas normais do motor CCZA 2.0 TSI (edite aqui para ajustar) ----------
+// Cada regra recebe o valor e devolve ['warn'|'bad', motivo] ou null.
+// Várias só valem com o motor quente e parado em marcha lenta, porque os valores mudam muito fora disso.
+const cur = {}; // último valor lido de cada PID
+const val = p => cur[p] ?? null;
+const engineOn = () => val('0C') > 400;
+const warm = () => val('05') >= 80;
+const idleWarm = () => warm() && val('0D') === 0 && engineOn() && val('0C') < 1300;
+const lambdaRule = v => idleWarm() && (v < 0.95 || v > 1.05) ? ['warn','Lambda fora de 0,95–1,05 em marcha lenta'] : null;
+const RULES = {
+  '05': v => v > 110 ? ['bad','Superaquecimento'] : v > 105 ? ['warn','Temperatura alta']
+           : val('1F') >= 900 && v < 75 ? ['warn','Motor não aquece: válvula termostática?'] : null,
+  '06': v => !engineOn() || Math.abs(v) <= 15 ? null : [Math.abs(v) > 25 ? 'bad' : 'warn', 'Correção curta alta'],
+  '07': v => !engineOn() || Math.abs(v) <= 10 ? null : [Math.abs(v) > 20 ? 'bad' : 'warn',
+           v > 0 ? 'Mistura pobre: entrada falsa de ar (PCV)?' : 'Mistura rica: bico ou pressão de combustível?'],
+  '0C': v => !idleWarm() ? null : v < 600 ? ['warn','Marcha lenta baixa'] : v > 1000 ? ['warn','Marcha lenta alta'] : null,
+  '0B': v => idleWarm() && v > 45 ? ['warn','Vácuo baixo em marcha lenta: entrada de ar?'] : null,
+  '10': v => !idleWarm() ? null : v < 1.8 ? ['warn','MAF baixo em lenta: sensor sujo ou entrada de ar'] : v > 5 ? ['warn','MAF alto em marcha lenta'] : null,
+  '0F': v => v > 70 ? ['warn','Ar de admissão muito quente'] : null,
+  '15': v => idleWarm() && (v < 0.4 || v > 0.95) ? ['warn','Sonda pós-cat. fora de 0,4–0,95 V: sonda ou catalisador'] : null,
+  '24': lambdaRule, '34': lambdaRule,
+  '3C': v => v > 900 ? ['bad','Catalisador superaquecendo: falha de combustão?'] : null,
+  '42': v => engineOn() ? (v < 13.2 ? ['warn','Alternador carregando pouco'] : v > 15 ? ['bad','Sobretensão no alternador'] : null)
+                        : (v < 12.2 ? ['warn','Bateria fraca'] : null),
+  '5C': v => v > 130 ? ['bad','Óleo muito quente'] : v > 120 ? ['warn','Óleo quente'] : null,
+};
+
+// Mostra o valor no cartão e aplica a regra de alerta.
+function show(el, x, v){
+  cur[x.p] = v === null || isNaN(v) ? null : Number(v);
+  el.querySelector('b').textContent = v === null ? '—' : v+(x.u ? ' '+x.u : '');
+  const a = cur[x.p] === null ? null : RULES[x.p]?.(cur[x.p]);
+  el.className = 'stat' + (a ? ' '+a[0] : '');
+  el.querySelector('em').textContent = a ? a[1] : '';
+  const sec = el.closest('.card'), n = sec.querySelectorAll('.stat.warn,.stat.bad').length;
+  sec.querySelector('.nal').textContent = n ? n + (n > 1 ? ' alertas' : ' alerta') : '';
+}
+
+const LIVE = [0x0C,0x05,0x06,0x07,0x15,0x0B,0x0D,0x42].map(mk);
+const card = (x,pre) => `<div class="stat" id="${pre}${x.p}" data-n="${x.n.toLowerCase()}"><b>—</b><span>${x.n}</span><em></em></div>`;
 $('#live').innerHTML = LIVE.map(x => card(x,'L')).join('');
 
 // Um laço de leitura por vez: iniciar um para o outro.
@@ -399,9 +444,8 @@ async function runLoop(btn, list, pre){
       if (tok !== loopTok) return;
       const el = $('#'+pre+x.p);
       if (!el || el.hidden) continue; // só lê o que está visível na busca
-      const d = await pid(x.p), v = d ? x.f(d) : null;
-      el.querySelector('b').textContent = v === null ? '—' : v+(x.u ? ' '+x.u : '');
-      if (x.trim) el.className = 'stat' + (v !== null && Math.abs(v) > 10 ? ' warn' : '');
+      const d = await pid(x.p);
+      show(el, x, d ? x.f(d) : null);
     }
   }
 }
@@ -419,8 +463,8 @@ async function discover(){
 }
 
 let ALL = null;
-function renderAll(list, vals={}){
-  $('#all').innerHTML = list.length ? list.map(x => card(x,'A',vals[x.p] ?? '—')).join('') : '<p class="empty">A central não informou nenhum sensor.</p>';
+function renderAll(list){
+  $('#all').innerHTML = list.length ? list.map(x => card(x,'A')).join('') : '<p class="empty">A central não informou nenhum sensor.</p>';
   filterAll();
 }
 function filterAll(){
@@ -505,9 +549,13 @@ $('#q').oninput = filterAll;
 $('#bDemo').onclick = () => render({t:Date.now(), demo:true, mil:false, count:1, fuel:16, stored:['P0036'], pending:[], perm:[],
   mis:[{cyl:1,avg:14,cur:0},{cyl:2,avg:0,cur:0},{cyl:3,avg:0,cur:2},{cyl:4,avg:0,cur:1}]}) || (!connected && renderDemoAll());
 function renderDemoAll(){
-  const v = {'04':'21.6 %','05':'89 °C','06':'-0.8 %','07':'3.1 %','0B':'31 kPa','0C':'780 rpm','0E':'8.5 °','0F':'34 °C','10':'2.71 g/s',
-    '11':'14.9 %','24':'1.002 λ','15':'0.690 V','33':'93 kPa','3C':'512 °C','42':'14.21 V','44':'1.000 λ','46':'27 °C'};
-  renderAll(Object.keys(v).map(p => mk(parseInt(p,16))), v);
+  // Valores de exemplo; a correção longa está alta de propósito para mostrar o alerta.
+  const v = {'04':'21.6','05':'89','06':'-0.8','07':'12.5','0B':'31','0C':'780','0D':'0','0E':'8.5','0F':'34','10':'2.71',
+    '11':'14.9','24':'1.002','15':'0.690','33':'93','3C':'512','42':'14.21','44':'1.000','46':'27'};
+  const list = Object.keys(v).map(p => mk(parseInt(p,16)));
+  renderAll(list);
+  for (const p in v) cur[p] = Number(v[p]); // preenche antes, porque as regras dependem de outros sensores
+  for (const x of list) show($('#A'+x.p), x, v[x.p]);
 }
 if (!navigator.bluetooth){ $('#nobt').hidden = false; $('#bConnect').disabled = true; }
 renderHist();
