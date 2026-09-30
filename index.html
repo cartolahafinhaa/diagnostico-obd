@@ -39,6 +39,12 @@ button:disabled{opacity:.4;cursor:default}
 .stat.bad{border-color:var(--bad)}.stat.bad em{color:var(--bad)}
 #live .stat.warn::after,#live .stat.bad::after,#all .stat.warn::after,#all .stat.bad::after{content:'!';position:absolute;top:8px;right:10px;width:18px;height:18px;border-radius:50%;background:var(--warn);color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center}
 #live .stat.bad::after,#all .stat.bad::after{background:var(--bad)}
+#misLive{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+#misLive h3{font-size:12px;color:var(--muted);margin:0 0 4px;text-transform:uppercase;letter-spacing:.05em}
+.mrow{display:flex;justify-content:space-between;padding:6px 0;font-size:14px}
+.mrow b{font-family:ui-monospace,Menlo,monospace}
+.mrow.sus{color:var(--bad);font-weight:700}
+#misLive ul{margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--bad)}
 .nal{margin-left:auto;color:var(--warn);text-transform:none;letter-spacing:0;font-weight:600}
 .stat.full{grid-column:1/-1}
 .stat.full b{font-size:15px}
@@ -116,6 +122,7 @@ pre{white-space:pre-wrap;font-size:11px;max-height:240px;overflow:auto;color:var
     <div class="legend"><span><i class="a"></i>Média (10 ciclos)</span><span><i class="c"></i>Ciclo atual</span></div>
     <div id="cyls"><p class="empty">Nenhuma leitura ainda.</p></div>
     <div class="verdict" id="verdict" hidden></div>
+    <div id="misLive" hidden></div>
   </section>
 
   <section class="card">
@@ -321,13 +328,40 @@ function parseMisfire(b, mid){
   return {avg, cur};
 }
 
-async function readMisfire(){
+async function readMisfire(quiet=false){
   const out = [];
   for (let c = 1; c <= 4; c++){
     const mid = 0xA1 + c;
-    out.push({cyl:c, ...parseMisfire(bytes(await send('06'+mid.toString(16).toUpperCase(), 4000)), mid)});
+    out.push({cyl:c, ...parseMisfire(bytes(await send('06'+mid.toString(16).toUpperCase(), 4000, quiet)), mid)});
   }
   return out;
+}
+
+// ---------- Falhas de combustão ao vivo (Modo 06, contador do ciclo atual, a cada 5 s) ----------
+let misTotal = [0,0,0,0], misPrev = null, misLast = 0, misEvents = [];
+function resetMis(){ misTotal = [0,0,0,0]; misPrev = null; misLast = 0; misEvents = []; }
+async function pollMisfire(){
+  if (Date.now() - misLast < 5000) return;
+  misLast = Date.now();
+  const now = (await readMisfire(true)).map(m => m.cur);
+  if (now.every(v => v === null)) return;
+  if (!misPrev) misPrev = now.slice();
+  const hora = new Date().toLocaleTimeString('pt-BR');
+  now.forEach((v,i) => {
+    if (v === null || misPrev[i] === null) return;
+    const step = v < misPrev[i] ? v : v - misPrev[i]; // se o contador zerou (novo ciclo), conta desde zero
+    misTotal[i] += step;
+    if (step >= 5) misEvents.unshift(`${hora} · Cilindro ${i+1}: +${step} falhas em 5 s`);
+  });
+  misPrev = now; misEvents = misEvents.slice(0,8);
+  renderMisLive(now.map((v,i) => v === null ? null : misTotal[i]));
+}
+function renderMisLive(d){
+  const s = suspect(d.map(x => ({avg:0, cur:x||0}))), el = $('#misLive');
+  el.hidden = false;
+  el.innerHTML = '<h3>Ao vivo · desde que tocou em Iniciar</h3>'
+    + d.map((x,i) => `<div class="mrow${s === i+1 ? ' sus' : ''}"><span>Cilindro ${i+1}</span><b>${x === null ? '—' : '+'+x}</b></div>`).join('')
+    + (misEvents.length ? `<ul>${misEvents.map(e => `<li>${e}</li>`).join('')}</ul>` : '<p class="empty">Nenhum salto de falhas até agora.</p>');
 }
 
 async function scan(){
@@ -437,13 +471,15 @@ function stopLoops(){ loopTok++; $('#bLive').textContent = 'Iniciar'; $('#bAll')
 async function runLoop(btn, list, pre){
   const running = btn.textContent === 'Parar';
   stopLoops(); if (running) return;
-  btn.textContent = 'Parar';
+  btn.textContent = 'Parar'; resetMis();
   const tok = loopTok;
   while (tok === loopTok && connected){
     for (const x of list){
       if (tok !== loopTok) return;
       const el = $('#'+pre+x.p);
       if (!el || el.hidden) continue; // só lê o que está visível na busca
+      await pollMisfire();
+      if (tok !== loopTok) return;
       const d = await pid(x.p);
       show(el, x, d ? x.f(d) : null);
     }
